@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
@@ -8,7 +9,7 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 class Yolov8Service {
 	Interpreter? _interpreter;
 	static const int _inputSize = 640;
-	static const double _confidenceThreshold = 0.5;
+	static const double _confidenceThreshold = 0.25;
 	static const double _nmsIouThreshold = 0.45;
 
 	Future<void> loadModel() async {
@@ -70,6 +71,70 @@ class Yolov8Service {
 				'classId': d.classId,
 			})
 			.toList();
+	}
+
+	Future<List<Map<String, dynamic>>> predictFromFile(String imagePath) async {
+		try {
+			final interpreter = _interpreter;
+			if (interpreter == null) {
+				throw StateError('Interpreter not initialized. Call loadModel() first.');
+			}
+
+			final List<int> bytes = File(imagePath).readAsBytesSync();
+			final img.Image? decoded = img.decodeImage(Uint8List.fromList(bytes));
+			if (decoded == null) {
+				// Return empty on decode failure to be null-safe
+				return <Map<String, dynamic>>[];
+			}
+
+			final img.Image resized = img.copyResize(
+				decoded,
+				width: _inputSize,
+				height: _inputSize,
+				interpolation: img.Interpolation.average,
+			);
+
+			final List<List<List<List<double>>>> input = List.generate(
+				1,
+				(_) => List.generate(
+					_inputSize,
+					(y) => List.generate(
+						_inputSize,
+						(x) {
+							final pixel = resized.getPixel(x, y);
+							final r = pixel.r / 255.0;
+							final g = pixel.g / 255.0;
+							final b = pixel.b / 255.0;
+							return [r, g, b];
+						},
+					),
+				),
+			);
+
+			final List<List<List<double>>> output = List.generate(
+				1,
+				(_) => List.generate(84, (_) => List<double>.filled(8400, 0.0)),
+			);
+
+			interpreter.run(input, output);
+
+			final List<_Detection> rawDetections = _postProcess(output[0]);
+			final List<_Detection> nms = _nonMaxSuppression(rawDetections, _nmsIouThreshold);
+
+			final List<_Detection> safeDetections = nms;
+			return safeDetections
+				.map((d) => {
+					'box': [d.x1, d.y1, d.x2, d.y2],
+					'confidence': d.score,
+					'classId': d.classId,
+				})
+				.toList();
+		} catch (e, st) {
+			// Log and return an empty list to ensure null-safety upstream
+			// ignore: avoid_print
+			print('predictFromFile error: $e\n$st');
+			return <Map<String, dynamic>>[];
+		}
 	}
 
 	img.Image _yuv420ToImage(CameraImage image) {

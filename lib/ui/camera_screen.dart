@@ -1,9 +1,10 @@
-import 'package:camera/camera.dart';
+﻿import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:visionai/detection/yolov8_service.dart';
 import 'package:visionai/ocr/ocr_service.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
 
 class CameraScreen extends StatefulWidget {
 	const CameraScreen({super.key});
@@ -19,9 +20,9 @@ class _CameraScreenState extends State<CameraScreen> {
 
 	final Yolov8Service _yolov8Service = Yolov8Service();
 	final OcrService _ocrService = OcrService();
-	bool _isProcessingFrame = false;
-	bool _isStreaming = false;
-	List<Map<String, dynamic>> _detections = <Map<String, dynamic>>[];
+	final FlutterTts flutterTts = FlutterTts();
+	bool isProcessing = false;
+	String? processingResult;
 
 	late final stt.SpeechToText _speech;
 	bool _isListening = false;
@@ -31,6 +32,7 @@ class _CameraScreenState extends State<CameraScreen> {
 	void initState() {
 		super.initState();
 		_speech = stt.SpeechToText();
+		_ocrService.initialize();
 		_initializeCameraFlow();
 	}
 
@@ -89,46 +91,11 @@ class _CameraScreenState extends State<CameraScreen> {
 				_isInitializing = false;
 				_errorMessage = null;
 			});
-
-			await _startImageStream();
 		} catch (e) {
 			setState(() {
 				_isInitializing = false;
 				_errorMessage = 'Failed to initialize camera: $e';
 			});
-		}
-	}
-
-	Future<void> _startImageStream() async {
-		final controller = _cameraController;
-		if (controller == null || !controller.value.isInitialized) return;
-		if (_isStreaming || controller.value.isStreamingImages) return;
-		await controller.startImageStream((CameraImage image) async {
-			if (_isProcessingFrame) return;
-			_isProcessingFrame = true;
-			try {
-				final results = await _yolov8Service.predict(image);
-				if (!mounted) return;
-				setState(() {
-					_detections = results;
-				});
-			} catch (_) {
-				// swallow frame errors to keep stream alive
-			} finally {
-				_isProcessingFrame = false;
-			}
-		});
-		_isStreaming = true;
-	}
-
-	Future<void> _stopImageStream() async {
-		final controller = _cameraController;
-		if (controller == null) return;
-		if (!_isStreaming) return;
-		try {
-			await controller.stopImageStream();
-		} finally {
-			_isStreaming = false;
 		}
 	}
 
@@ -165,12 +132,12 @@ class _CameraScreenState extends State<CameraScreen> {
 		await _speech.listen(
 			onResult: (result) async {
 				final recognized = (result.recognizedWords).toLowerCase();
-				if (recognized.contains('scan book') || recognized.contains('read text')) {
+				if (recognized.contains('scan book') || recognized.contains('read text') || recognized.contains('capture') || recognized.contains("tell me what's ahead") || recognized.contains('tell me what\'s ahead')) {
 					await _speech.stop();
 					setState(() {
 						_isListening = false;
 					});
-					await _onCapturePressed();
+					await captureAndProcessImage();
 				}
 			},
 			localeId: 'en_US',
@@ -179,9 +146,70 @@ class _CameraScreenState extends State<CameraScreen> {
 		);
 	}
 
+	Future<void> captureAndProcessImage() async {
+		final controller = _cameraController;
+		if (controller == null || !controller.value.isInitialized) return;
+		if (isProcessing) return;
+		setState(() {
+			isProcessing = true;
+			processingResult = 'Processing...';
+		});
+		try {
+			await controller.setFlashMode(FlashMode.off);
+			final XFile file = await controller.takePicture();
+
+			print("--- Starting Capture and Process ---");
+			final String imagePath = file.path;
+			print("1. Picture taken at: $imagePath");
+			final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
+			final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? <Map<String, dynamic>>[];
+			print("2. YOLO service returned: $yoloResults");
+			print("   Safeguarded YOLO results: $safeYoloResults");
+			final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
+			final String safeOcrText = (ocrText?.trim() ?? '');
+			print("3. OCR service returned: '$ocrText'");
+			print("   Safeguarded OCR text: '$safeOcrText'");
+			final StringBuffer resultBuffer = StringBuffer();
+			if (safeYoloResults.isNotEmpty) {
+				resultBuffer.write("I see ");
+				final String objectNames = safeYoloResults.map((r) => (r['tag'] ?? r['label'] ?? r['class'] ?? r['classId'] ?? 'unknown').toString()).join(', ');
+				resultBuffer.write(objectNames);
+				resultBuffer.write('. ');
+			}
+			if (safeOcrText.isNotEmpty) {
+				resultBuffer.write("The text says: $safeOcrText");
+			}
+			String finalResultString = resultBuffer.toString();
+			if (finalResultString.isEmpty) {
+				finalResultString = "Nothing detected. Please try again.";
+			}
+			print("4. Final result string: '$finalResultString'");
+			print("--- Process Finished ---");
+			if (!mounted) return;
+			setState(() {
+				processingResult = finalResultString;
+			});
+			await flutterTts.speak(finalResultString);
+		} catch (e, stackTrace) {
+			print('!!! AN ERROR OCCURRED DURING PROCESSING: $e');
+			print('Stack Trace: $stackTrace');
+			if (mounted) {
+				setState(() {
+					processingResult = "Processing failed. Please try again.";
+				});
+				flutterTts.speak("Processing failed. Please try again.");
+			}
+		} finally {
+			if (mounted) {
+				setState(() {
+					isProcessing = false;
+				});
+			}
+		}
+	}
+
 	@override
 	void dispose() {
-		_stopImageStream();
 		_cameraController?.dispose();
 		_yolov8Service.dispose();
 		super.dispose();
@@ -220,16 +248,37 @@ class _CameraScreenState extends State<CameraScreen> {
 							fit: StackFit.expand,
 							children: [
 								CameraPreview(_cameraController!),
-								CustomPaint(
-									painter: _DetectionsPainter(
-										detections: _detections,
-										screenSize: MediaQuery.of(context).size,
-									),
-								),
 							],
 						)
 					else
 						const SizedBox.shrink(),
+
+					// Result overlay at bottom
+					if (processingResult != null)
+						Positioned(
+							left: 0,
+							right: 0,
+							bottom: 0,
+							child: SafeArea(
+								minimum: const EdgeInsets.only(bottom: 16),
+								child: GestureDetector(
+									onTap: () => setState(() => processingResult = null),
+									child: Container(
+										margin: const EdgeInsets.symmetric(horizontal: 16),
+										padding: const EdgeInsets.all(16),
+										decoration: BoxDecoration(
+											color: Colors.black87,
+											borderRadius: BorderRadius.circular(16),
+										),
+										child: Text(
+											processingResult!,
+											style: const TextStyle(color: Colors.white),
+											textAlign: TextAlign.center,
+										),
+									),
+								),
+							),
+						),
 
 					// Bottom control bar overlay
 					Align(
@@ -255,7 +304,7 @@ class _CameraScreenState extends State<CameraScreen> {
 										IconButton(
 											iconSize: 72,
 											icon: const Icon(Icons.radio_button_unchecked, color: Colors.white),
-											onPressed: _onCapturePressed,
+											onPressed: captureAndProcessImage,
 										),
 										IconButton(
 											icon: Icon(Icons.mic, color: _isListening ? Colors.redAccent : Colors.white),
@@ -269,86 +318,5 @@ class _CameraScreenState extends State<CameraScreen> {
 				],
 			),
 		);
-	}
-
-	Future<void> _onCapturePressed() async {
-		final controller = _cameraController;
-		if (controller == null || !controller.value.isInitialized) return;
-		try {
-			if (controller.value.isStreamingImages) {
-				await _stopImageStream();
-			}
-			await controller.setFlashMode(FlashMode.off);
-			final XFile file = await controller.takePicture();
-
-			final String text = await _ocrService.recognizeTextFromImage(file.path);
-			if (!mounted) return;
-			await showDialog<void>(
-				context: context,
-				builder: (context) {
-					return AlertDialog(
-						title: const Text('Recognized Text'),
-						content: SingleChildScrollView(child: Text(text.isEmpty ? '(No text found)' : text)),
-						actions: [
-							TextButton(
-								onPressed: () => Navigator.of(context).pop(),
-								child: const Text('Close'),
-							),
-						],
-					);
-				},
-			);
-		} catch (e) {
-			if (!mounted) return;
-			ScaffoldMessenger.of(context).showSnackBar(
-				SnackBar(content: Text('Capture failed: $e')),
-			);
-		} finally {
-			// Ensure the stream restarts even if an error occurs above
-			if (!controller.value.isStreamingImages) {
-				await _startImageStream();
-			}
-		}
-	}
-}
-
-class _DetectionsPainter extends CustomPainter {
-	final List<Map<String, dynamic>> detections;
-	final Size screenSize;
-
-	_DetectionsPainter({
-		required this.detections,
-		required this.screenSize,
-	});
-
-	@override
-	void paint(Canvas canvas, Size size) {
-		final paint = Paint()
-			..style = PaintingStyle.stroke
-			..strokeWidth = 2.0
-			..color = Colors.greenAccent;
-
-		for (final d in detections) {
-			final List box = d['box'] as List;
-			if (box.length != 4) continue;
-			double x1 = (box[0] as num).toDouble();
-			double y1 = (box[1] as num).toDouble();
-			double x2 = (box[2] as num).toDouble();
-			double y2 = (box[3] as num).toDouble();
-
-			// The model coordinates are in 640x640 space. Scale to current canvas size.
-			const double modelW = 640.0;
-			const double modelH = 640.0;
-			final double scaleX = size.width / modelW;
-			final double scaleY = size.height / modelH;
-
-			final rect = Rect.fromLTRB(x1 * scaleX, y1 * scaleY, x2 * scaleX, y2 * scaleY);
-			canvas.drawRect(rect, paint);
-		}
-	}
-
-	@override
-	bool shouldRepaint(covariant _DetectionsPainter oldDelegate) {
-		return oldDelegate.detections != detections || oldDelegate.screenSize != screenSize;
 	}
 } 
