@@ -65,6 +65,8 @@ class _CameraScreenState extends State<CameraScreen> {
 
 			// Load model in advance
 			await _yolov8Service.loadModel();
+      // OCR initialization
+      await _ocrService.initialize();
 
 			final cameras = await availableCameras();
 			final backCameras = cameras.where((c) => c.lensDirection == CameraLensDirection.back).toList();
@@ -147,66 +149,78 @@ class _CameraScreenState extends State<CameraScreen> {
 	}
 
 	Future<void> captureAndProcessImage() async {
-		final controller = _cameraController;
-		if (controller == null || !controller.value.isInitialized) return;
-		if (isProcessing) return;
-		setState(() {
-			isProcessing = true;
-			processingResult = 'Processing...';
-		});
-		try {
-			await controller.setFlashMode(FlashMode.off);
-			final XFile file = await controller.takePicture();
+  final controller = _cameraController;
+  if (controller == null || !controller.value.isInitialized) return;
+  if (isProcessing) return;
 
-			print("--- Starting Capture and Process ---");
-			final String imagePath = file.path;
-			print("1. Picture taken at: $imagePath");
-			final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
-			final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? <Map<String, dynamic>>[];
-			print("2. YOLO service returned: $yoloResults");
-			print("   Safeguarded YOLO results: $safeYoloResults");
-			final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
-			final String safeOcrText = (ocrText?.trim() ?? '');
-			print("3. OCR service returned: '$ocrText'");
-			print("   Safeguarded OCR text: '$safeOcrText'");
-			final StringBuffer resultBuffer = StringBuffer();
-			if (safeYoloResults.isNotEmpty) {
-				resultBuffer.write("I see ");
-				final String objectNames = safeYoloResults.map((r) => (r['tag'] ?? r['label'] ?? r['class'] ?? r['classId'] ?? 'unknown').toString()).join(', ');
-				resultBuffer.write(objectNames);
-				resultBuffer.write('. ');
-			}
-			if (safeOcrText.isNotEmpty) {
-				resultBuffer.write("The text says: $safeOcrText");
-			}
-			String finalResultString = resultBuffer.toString();
-			if (finalResultString.isEmpty) {
-				finalResultString = "Nothing detected. Please try again.";
-			}
-			print("4. Final result string: '$finalResultString'");
-			print("--- Process Finished ---");
-			if (!mounted) return;
-			setState(() {
-				processingResult = finalResultString;
-			});
-			await flutterTts.speak(finalResultString);
-		} catch (e, stackTrace) {
-			print('!!! AN ERROR OCCURRED DURING PROCESSING: $e');
-			print('Stack Trace: $stackTrace');
-			if (mounted) {
-				setState(() {
-					processingResult = "Processing failed. Please try again.";
-				});
-				flutterTts.speak("Processing failed. Please try again.");
-			}
-		} finally {
-			if (mounted) {
-				setState(() {
-					isProcessing = false;
-				});
-			}
-		}
-	}
+  setState(() {
+    isProcessing = true;
+    // We remove the "Processing..." text to only show the spinner
+  });
+
+  try {
+    await controller.setFlashMode(FlashMode.auto);
+    final XFile file = await controller.takePicture();
+
+    print("--- Starting Capture and Process ---");
+    final String imagePath = file.path;
+    print("1. Picture taken at: $imagePath");
+    
+    final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
+    final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? [];
+    print("2. YOLO service returned: $yoloResults");
+    print("   Safeguarded YOLO results: $safeYoloResults");
+    
+    final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
+    // This is the CRITICAL FIX using the null-aware '?.' operator
+    final String safeOcrText = ocrText?.trim() ?? '';
+    print("3. OCR service returned: '$ocrText'");
+    print("   Safeguarded OCR text: '$safeOcrText'");
+    
+    final StringBuffer resultBuffer = StringBuffer();
+    if (safeYoloResults.isNotEmpty) {
+      resultBuffer.write("I see ");
+      final String objectNames = safeYoloResults.map((r) => r['tag'] ?? 'unknown').toSet().join(', ');
+      resultBuffer.write(objectNames);
+      resultBuffer.write('. ');
+    }
+    
+    if (safeOcrText.isNotEmpty) {
+      resultBuffer.write("The text says: $safeOcrText");
+    }
+    
+    String finalResultString = resultBuffer.toString();
+    if (finalResultString.isEmpty) {
+      finalResultString = "Nothing detected. Please try again.";
+    }
+    
+    print("4. Final result string: '$finalResultString'");
+    print("--- Process Finished ---");
+    
+    if (!mounted) return;
+    setState(() {
+      processingResult = finalResultString;
+    });
+    
+    await flutterTts.speak(finalResultString);
+    
+  } catch (e, stackTrace) {
+    print('!!! AN ERROR OCCURRED DURING PROCESSING: $e');
+    print('Stack Trace: $stackTrace');
+    if (mounted) {
+      setState(() {
+        processingResult = "Processing failed. Please try again.";
+      });
+      flutterTts.speak("Processing failed. Please try again.");
+    }
+  } finally {
+    if (mounted) {
+      setState(() {
+        isProcessing = false;
+      });
+    }
+  }
+}
 
 	@override
 	void dispose() {
@@ -253,65 +267,69 @@ class _CameraScreenState extends State<CameraScreen> {
 					else
 						const SizedBox.shrink(),
 
-					// Result overlay at bottom
-					if (processingResult != null)
-						Positioned(
-							left: 0,
-							right: 0,
-							bottom: 0,
-							child: SafeArea(
-								minimum: const EdgeInsets.only(bottom: 16),
-								child: GestureDetector(
-									onTap: () => setState(() => processingResult = null),
-									child: Container(
-										margin: const EdgeInsets.symmetric(horizontal: 16),
-										padding: const EdgeInsets.all(16),
-										decoration: BoxDecoration(
-											color: Colors.black87,
-											borderRadius: BorderRadius.circular(16),
-										),
-										child: Text(
-											processingResult!,
-											style: const TextStyle(color: Colors.white),
-											textAlign: TextAlign.center,
-										),
-									),
-								),
-							),
-						),
-
-					// Bottom control bar overlay
-					Align(
-						alignment: Alignment.bottomCenter,
+					// Add processing overlay spinner while keeping preview live
+					if (isProcessing)
+						Container(
+              color: Colors.black.withOpacity(0.5),
+              child: const Center(child: CircularProgressIndicator()),
+            ),
+					// Result and controls combined at bottom to avoid overlap
+					Positioned(
+						left: 0,
+						right: 0,
+						bottom: 0,
 						child: SafeArea(
 							minimum: const EdgeInsets.only(bottom: 16),
-							child: Container(
-								margin: const EdgeInsets.symmetric(horizontal: 16),
-								padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-								decoration: BoxDecoration(
-									color: Colors.black54,
-									borderRadius: BorderRadius.circular(32),
-								),
-								child: Row(
-									mainAxisAlignment: MainAxisAlignment.spaceBetween,
-									children: [
-										IconButton(
-											icon: const Icon(Icons.history, color: Colors.white),
-											onPressed: () {
-												// Placeholder: history action
-											},
+							child: Column(
+								mainAxisSize: MainAxisSize.min,
+								children: [
+									if (processingResult != null)
+										GestureDetector(
+											onTap: () => setState(() => processingResult = null),
+											child: Container(
+												margin: const EdgeInsets.symmetric(horizontal: 16),
+												padding: const EdgeInsets.all(16),
+												decoration: BoxDecoration(
+													color: Colors.black87,
+													borderRadius: BorderRadius.circular(16),
+												),
+												child: Text(
+													processingResult!,
+													style: const TextStyle(color: Colors.white),
+													textAlign: TextAlign.center,
+												),
+											),
 										),
-										IconButton(
-											iconSize: 72,
-											icon: const Icon(Icons.radio_button_unchecked, color: Colors.white),
-											onPressed: captureAndProcessImage,
+
+									Container(
+										margin: const EdgeInsets.symmetric(horizontal: 16),
+										padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+										decoration: BoxDecoration(
+											color: Colors.black54,
+											borderRadius: BorderRadius.circular(32),
 										),
-										IconButton(
-											icon: Icon(Icons.mic, color: _isListening ? Colors.redAccent : Colors.white),
-											onPressed: _startListening,
+										child: Row(
+											mainAxisAlignment: MainAxisAlignment.spaceBetween,
+											children: [
+												IconButton(
+													icon: const Icon(Icons.history, color: Colors.white),
+													onPressed: () {
+														// Placeholder: history action
+													},
+												),
+												IconButton(
+													iconSize: 72,
+													icon: const Icon(Icons.radio_button_unchecked, color: Colors.white),
+													onPressed: captureAndProcessImage,
+												),
+												IconButton(
+													icon: Icon(Icons.mic, color: _isListening ? Colors.redAccent : Colors.white),
+													onPressed: _startListening,
+												),
+											],
 										),
-									],
-								),
+									),
+								],
 							),
 						),
 					),
