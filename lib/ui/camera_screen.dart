@@ -148,42 +148,66 @@ class _CameraScreenState extends State<CameraScreen> {
 		);
 	}
 
-	Future<void> captureAndProcessImage() async {
+// Format detections for TTS
+  String formatDetectionsForTTS(List<Map<String, dynamic>> detections) {
+  if (detections.isEmpty) {
+    return "No objects detected.";
+  }
+
+  // Get a list of unique object names
+  final objectNames = detections.map((r) => r['tag'] as String).toSet().toList();
+
+  if (objectNames.length == 1) {
+    return "There is a ${objectNames.first}.";
+  } 
+  else if (objectNames.length == 2) {
+    return "There are a ${objectNames.first} and a ${objectNames.last}.";
+  } 
+  else {
+    // For 3 or more items, join with commas and add "and" before the last one.
+    final allButLast = objectNames.sublist(0, objectNames.length - 1).join(', a ');
+    final last = objectNames.last;
+    return "There are a $allButLast, and a $last.";
+  }
+}
+
+Future<void> captureAndProcessImage() async {
   final controller = _cameraController;
   if (controller == null || !controller.value.isInitialized) return;
   if (isProcessing) return;
 
-  setState(() {
-    isProcessing = true;
-    // We remove the "Processing..." text to only show the spinner
-  });
-
   try {
-    await controller.setFlashMode(FlashMode.auto);
-    final XFile file = await controller.takePicture();
+    setState(() {
+      isProcessing = true;
+    });
 
+    final XFile file = await controller.takePicture();
     print("--- Starting Capture and Process ---");
     final String imagePath = file.path;
     print("1. Picture taken at: $imagePath");
-    
+
     final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
     final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? [];
     print("2. YOLO service returned: $yoloResults");
     print("   Safeguarded YOLO results: $safeYoloResults");
-    
-    final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
-    // This is the CRITICAL FIX using the null-aware '?.' operator
-    final String safeOcrText = ocrText?.trim() ?? '';
-    print("3. OCR service returned: '$ocrText'");
-    print("   Safeguarded OCR text: '$safeOcrText'");
-    
-    final StringBuffer resultBuffer = StringBuffer();
-    if (safeYoloResults.isNotEmpty) {
-      resultBuffer.write("I see ");
-      final String objectNames = safeYoloResults.map((r) => r['tag'] ?? 'unknown').toSet().join(', ');
-      resultBuffer.write(objectNames);
-      resultBuffer.write('. ');
+
+    // --- NEW, ISOLATED SAFETY NET FOR OCR ---
+    String safeOcrText = ''; // Default to an empty string
+    try {
+      print("3. Attempting OCR service call...");
+      final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
+      safeOcrText = ocrText?.trim() ?? '';
+      print("   OCR service succeeded with text: '$safeOcrText'");
+    } catch (e, stackTrace) {
+      print("!!! OCR SERVICE FAILED (but we caught it): $e");
+      print("   Stack Trace: $stackTrace");
+      // We caught the error, so we'll just proceed with an empty text result.
     }
+    // --- END OF OCR SAFETY NET ---
+
+    final StringBuffer resultBuffer = StringBuffer();
+    resultBuffer.write(formatDetectionsForTTS(safeYoloResults));
+    resultBuffer.write(' '); // Add a space between detections and OCR text for separation
     
     if (safeOcrText.isNotEmpty) {
       resultBuffer.write("The text says: $safeOcrText");
@@ -195,7 +219,6 @@ class _CameraScreenState extends State<CameraScreen> {
     }
     
     print("4. Final result string: '$finalResultString'");
-    print("--- Process Finished ---");
     
     if (!mounted) return;
     setState(() {
@@ -205,13 +228,13 @@ class _CameraScreenState extends State<CameraScreen> {
     await flutterTts.speak(finalResultString);
     
   } catch (e, stackTrace) {
-    print('!!! AN ERROR OCCURRED DURING PROCESSING: $e');
-    print('Stack Trace: $stackTrace');
+    // This outer catch is for other unexpected errors (like taking a picture failing)
+    print('!!! AN UNEXPECTED ERROR OCCURRED: $e');
     if (mounted) {
       setState(() {
-        processingResult = "Processing failed. Please try again.";
+        processingResult = "An unexpected error occurred.";
       });
-      flutterTts.speak("Processing failed. Please try again.");
+      flutterTts.speak("An unexpected error occurred.");
     }
   } finally {
     if (mounted) {
