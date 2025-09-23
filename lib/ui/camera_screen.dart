@@ -32,7 +32,6 @@ class _CameraScreenState extends State<CameraScreen> {
 	void initState() {
 		super.initState();
 		_speech = stt.SpeechToText();
-		_ocrService.initialize();
 		_initializeCameraFlow();
 	}
 
@@ -65,8 +64,6 @@ class _CameraScreenState extends State<CameraScreen> {
 
 			// Load model in advance
 			await _yolov8Service.loadModel();
-      // OCR initialization
-      await _ocrService.initialize();
 
 			final cameras = await availableCameras();
 			final backCameras = cameras.where((c) => c.lensDirection == CameraLensDirection.back).toList();
