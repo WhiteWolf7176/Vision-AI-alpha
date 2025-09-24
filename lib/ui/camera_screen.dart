@@ -5,6 +5,7 @@ import 'package:visionai/detection/yolov8_service.dart';
 import 'package:visionai/ocr/ocr_service.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'dart:ui';
 
 class CameraScreen extends StatefulWidget {
 	const CameraScreen({super.key});
@@ -23,6 +24,7 @@ class _CameraScreenState extends State<CameraScreen> {
 	final FlutterTts flutterTts = FlutterTts();
 	bool isProcessing = false;
 	String? processingResult;
+	bool isResultExpanded = true;
 
 	late final stt.SpeechToText _speech;
 	bool _isListening = false;
@@ -146,101 +148,83 @@ class _CameraScreenState extends State<CameraScreen> {
 	}
 
 // Format detections for TTS
-  String formatDetectionsForTTS(List<Map<String, dynamic>> detections) {
-  if (detections.isEmpty) {
-    return "No objects detected.";
-  }
+	String formatDetectionsForTTS(List<Map<String, dynamic>> detections) {
+		if (detections.isEmpty) {
+			return "No objects detected.";
+		}
 
-  // Get a list of unique object names
-  final objectNames = detections.map((r) => r['tag'] as String).toSet().toList();
+		// Get a list of unique object names
+		final objectNames = detections.map((r) => r['tag'] as String).toSet().toList();
 
-  if (objectNames.length == 1) {
-    return "There is a ${objectNames.first}.";
-  } 
-  else if (objectNames.length == 2) {
-    return "There are a ${objectNames.first} and a ${objectNames.last}.";
-  } 
-  else {
-    // For 3 or more items, join with commas and add "and" before the last one.
-    final allButLast = objectNames.sublist(0, objectNames.length - 1).join(', a ');
-    final last = objectNames.last;
-    return "There are a $allButLast, and a $last.";
-  }
-}
+		if (objectNames.length == 1) {
+			return "There is a ${objectNames.first}.";
+		} 
+		else if (objectNames.length == 2) {
+			return "There are a ${objectNames.first} and a ${objectNames.last}.";
+		} 
+		else {
+			// For 3 or more items, join with commas and add "and" before the last one.
+			final allButLast = objectNames.sublist(0, objectNames.length - 1).join(', a ');
+			final last = objectNames.last;
+			return "There are a $allButLast, and a $last.";
+		}
+	}
 
-Future<void> captureAndProcessImage() async {
-  final controller = _cameraController;
-  if (controller == null || !controller.value.isInitialized) return;
-  if (isProcessing) return;
+	Future<void> captureAndProcessImage() async {
+		final controller = _cameraController;
+		if (controller == null || !controller.value.isInitialized) return;
+		if (isProcessing) return;
 
-  try {
-    setState(() {
-      isProcessing = true;
-    });
+		try {
+			setState(() {
+				isProcessing = true;
+			});
 
-    final XFile file = await controller.takePicture();
-    print("--- Starting Capture and Process ---");
-    final String imagePath = file.path;
-    print("1. Picture taken at: $imagePath");
+			final XFile file = await controller.takePicture();
+			final String imagePath = file.path;
 
-    final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
-    final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? [];
-    print("2. YOLO service returned: $yoloResults");
-    print("   Safeguarded YOLO results: $safeYoloResults");
+			final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
+			final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? [];
 
-    // --- NEW, ISOLATED SAFETY NET FOR OCR ---
-    String safeOcrText = ''; // Default to an empty string
-    try {
-      print("3. Attempting OCR service call...");
-      final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
-      safeOcrText = ocrText?.trim() ?? '';
-      print("   OCR service succeeded with text: '$safeOcrText'");
-    } catch (e, stackTrace) {
-      print("!!! OCR SERVICE FAILED (but we caught it): $e");
-      print("   Stack Trace: $stackTrace");
-      // We caught the error, so we'll just proceed with an empty text result.
-    }
-    // --- END OF OCR SAFETY NET ---
+			String safeOcrText = '';
+			try {
+				final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
+				safeOcrText = ocrText?.trim() ?? '';
+			} catch (_) {
+				// ignore OCR errors, proceed with empty text
+			}
 
-    final StringBuffer resultBuffer = StringBuffer();
-    resultBuffer.write(formatDetectionsForTTS(safeYoloResults));
-    resultBuffer.write(' '); // Add a space between detections and OCR text for separation
-    
-    if (safeOcrText.isNotEmpty) {
-      resultBuffer.write("The text says: $safeOcrText");
-    }
-    
-    String finalResultString = resultBuffer.toString();
-    if (finalResultString.isEmpty) {
-      finalResultString = "Nothing detected. Please try again.";
-    }
-    
-    print("4. Final result string: '$finalResultString'");
-    
-    if (!mounted) return;
-    setState(() {
-      processingResult = finalResultString;
-    });
-    
-    await flutterTts.speak(finalResultString);
-    
-  } catch (e, stackTrace) {
-    // This outer catch is for other unexpected errors (like taking a picture failing)
-    print('!!! AN UNEXPECTED ERROR OCCURRED: $e');
-    if (mounted) {
-      setState(() {
-        processingResult = "An unexpected error occurred.";
-      });
-      flutterTts.speak("An unexpected error occurred.");
-    }
-  } finally {
-    if (mounted) {
-      setState(() {
-        isProcessing = false;
-      });
-    }
-  }
-}
+			final StringBuffer resultBuffer = StringBuffer();
+			resultBuffer.write(formatDetectionsForTTS(safeYoloResults));
+			resultBuffer.write(' ');
+			if (safeOcrText.isNotEmpty) {
+				resultBuffer.write("The text says: $safeOcrText");
+			}
+			final String finalResultString = resultBuffer.toString();
+
+			if (!mounted) return;
+			setState(() {
+				processingResult = finalResultString.isEmpty ? "Nothing detected. Please try again." : finalResultString;
+			});
+
+			await flutterTts.speak(processingResult!);
+		} catch (e, stackTrace) {
+			// This outer catch is for other unexpected errors (like taking a picture failing)
+			print('!!! AN UNEXPECTED ERROR OCCURRED: $e');
+			if (mounted) {
+				setState(() {
+					processingResult = "An unexpected error occurred.";
+				});
+				flutterTts.speak("An unexpected error occurred.");
+			}
+		} finally {
+			if (mounted) {
+				setState(() {
+					isProcessing = false;
+				});
+			}
+		}
+	}
 
 	@override
 	void dispose() {
@@ -290,9 +274,9 @@ Future<void> captureAndProcessImage() async {
 					// Add processing overlay spinner while keeping preview live
 					if (isProcessing)
 						Container(
-              color: Colors.black.withOpacity(0.5),
-              child: const Center(child: CircularProgressIndicator()),
-            ),
+							color: Colors.black.withOpacity(0.5),
+							child: const Center(child: CircularProgressIndicator()),
+						),
 					// Result and controls combined at bottom to avoid overlap
 					Positioned(
 						left: 0,
@@ -304,51 +288,94 @@ Future<void> captureAndProcessImage() async {
 								mainAxisSize: MainAxisSize.min,
 								children: [
 									if (processingResult != null)
-										GestureDetector(
-											onTap: () => setState(() => processingResult = null),
-											child: Container(
-												margin: const EdgeInsets.symmetric(horizontal: 16),
-												padding: const EdgeInsets.all(16),
-												decoration: BoxDecoration(
-													color: Colors.black87,
-													borderRadius: BorderRadius.circular(16),
-												),
-												child: Text(
-													processingResult!,
-													style: const TextStyle(color: Colors.white),
-													textAlign: TextAlign.center,
+										Padding(
+											padding: const EdgeInsets.symmetric(horizontal: 16),
+																										child: ClipRRect(
+																borderRadius: BorderRadius.circular(24),
+												child: BackdropFilter(
+													filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+													child: Container(
+														padding: const EdgeInsets.all(12),
+														decoration: BoxDecoration(
+															color: Colors.white.withOpacity(0.12),
+															borderRadius: BorderRadius.circular(24),
+														),
+														child: Column(
+															mainAxisSize: MainAxisSize.min,
+															children: [
+																SizedBox(
+																	height: isResultExpanded ? 200.0 : 50.0,
+																	child: SingleChildScrollView(
+																		child: Text(
+																			processingResult!,
+																			style: const TextStyle(
+																				fontSize: 16,
+																				color: Colors.white,
+																				fontWeight: FontWeight.w500,
+																			),
+																			textAlign: TextAlign.center,
+																		),
+																	),
+																),
+																Align(
+																	alignment: Alignment.centerRight,
+																	child: IconButton(
+																		icon: Icon(
+																			isResultExpanded ? Icons.expand_more : Icons.expand_less,
+																			color: Colors.white,
+																		),
+																		onPressed: () {
+																		setState(() {
+																			isResultExpanded = !isResultExpanded;
+																		});
+																	},
+																	),
+																),
+															],
+														),
+													),
 												),
 											),
 										),
 
-									Container(
-										margin: const EdgeInsets.symmetric(horizontal: 16),
-										padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-										decoration: BoxDecoration(
-											color: Colors.black54,
-											borderRadius: BorderRadius.circular(32),
-										),
-										child: Row(
-											mainAxisAlignment: MainAxisAlignment.spaceBetween,
-											children: [
-												IconButton(
-													icon: const Icon(Icons.history, color: Colors.white),
-													onPressed: () {
-														// Placeholder: history action
-													},
-												),
-												IconButton(
-													iconSize: 72,
-													icon: const Icon(Icons.radio_button_unchecked, color: Colors.white),
-													onPressed: captureAndProcessImage,
-												),
-												IconButton(
-													icon: Icon(Icons.mic, color: _isListening ? Colors.redAccent : Colors.white),
-													onPressed: _startListening,
-												),
-											],
-										),
-									),
+															const SizedBox(height: 12),
+
+															Container(
+																margin: const EdgeInsets.symmetric(horizontal: 16),
+																child: ClipRRect(
+																	borderRadius: BorderRadius.circular(24),
+																	child: BackdropFilter(
+																		filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+																		child: Container(
+																			padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+																			decoration: BoxDecoration(
+																				color: Colors.white.withOpacity(0.12),
+																				borderRadius: BorderRadius.circular(24),
+																			),
+																			child: Row(
+																				mainAxisAlignment: MainAxisAlignment.spaceBetween,
+																				children: [
+																					IconButton(
+																						icon: const Icon(Icons.history, color: Colors.white),
+																						onPressed: () {
+																							// Placeholder: history action
+																						},
+																					),
+																					IconButton(
+																						iconSize: 72,
+																						icon: const Icon(Icons.radio_button_unchecked, color: Colors.white),
+																						onPressed: captureAndProcessImage,
+																					),
+																					IconButton(
+																						icon: Icon(Icons.mic, color: _isListening ? Colors.redAccent : Colors.white),
+																						onPressed: _startListening,
+																					),
+																				],
+																			),
+																		),
+																	),
+															),
+                              ),
 								],
 							),
 						),
