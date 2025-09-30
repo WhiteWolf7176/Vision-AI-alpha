@@ -14,7 +14,7 @@ class CameraScreen extends StatefulWidget {
 	State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMixin {
 	CameraController? _cameraController;
 	bool _isInitializing = true;
 	String? _errorMessage;
@@ -180,6 +180,8 @@ class _CameraScreenState extends State<CameraScreen> {
 				isProcessing = true;
 			});
 
+			flutterTts.speak("Processing");
+
 			final XFile file = await controller.takePicture();
 			final String imagePath = file.path;
 
@@ -283,109 +285,128 @@ class _CameraScreenState extends State<CameraScreen> {
 						),
 					// Result and controls combined at bottom to avoid overlap
 					Positioned(
-						left: 0,
-						right: 0,
-						bottom: 0,
-						child: SafeArea(
-							minimum: const EdgeInsets.only(bottom: 16),
-							child: Column(
-								mainAxisSize: MainAxisSize.min,
-								children: [
-									if (processingResult != null)
-										Padding(
-											padding: const EdgeInsets.symmetric(horizontal: 16),
-																										child: ClipRRect(
-																borderRadius: BorderRadius.circular(24),
-												child: BackdropFilter(
-													filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-													child: Container(
-														padding: const EdgeInsets.all(12),
-														decoration: BoxDecoration(
-															color: Colors.white.withOpacity(0.12),
-															borderRadius: BorderRadius.circular(24),
-														),
-														child: Column(
-															mainAxisSize: MainAxisSize.min,
-															children: [
-																SizedBox(
-																	height: isResultExpanded ? 200.0 : 50.0,
-																	child: SingleChildScrollView(
-																		child: Text(
-																			processingResult!,
-																			style: const TextStyle(
-																				fontSize: 16,
-																				color: Colors.white,
-																				fontWeight: FontWeight.w500,
-																			),
-																			textAlign: TextAlign.center,
-																		),
-																	),
-																),
-																// Align(
-																// 	alignment: Alignment.centerRight,
-																// 	child: IconButton(
-																// 		icon: Icon(
-																// 			isResultExpanded ? Icons.expand_more : Icons.expand_less,
-																// 			color: Colors.white,
-																// 		),
-																// 		onPressed: () {
-																// 		setState(() {
-																// 			isResultExpanded = !isResultExpanded;
-																// 		});
-																// 	},
-																// 	),
-																// ),
-															],
-														),
-													),
-												),
-											),
-										),
-
-															const SizedBox(height: 12),
-
-															Container(
-																margin: const EdgeInsets.symmetric(horizontal: 16),
-																child: ClipRRect(
-																	borderRadius: BorderRadius.circular(24),
-																	child: BackdropFilter(
-																		filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-																		child: Container(
-																			padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-																			decoration: BoxDecoration(
-																				color: Colors.white.withOpacity(0.12),
-																				borderRadius: BorderRadius.circular(24),
-																			),
-																			child: Row(
-																				mainAxisAlignment: MainAxisAlignment.spaceBetween,
-																				children: [
-																					IconButton(
-																						icon: const Icon(Icons.history, color: Colors.white),
-																						onPressed: () {
-																							// Placeholder: history action
-																						},
-																					),
-																					IconButton(
-																						iconSize: 72,
-																						icon: const Icon(Icons.radio_button_unchecked, color: Colors.white),
-																						onPressed: captureAndProcessImage,
-																					),
-																					IconButton(
-																						icon: Icon(Icons.mic, color: _isListening ? Colors.redAccent : Colors.white),
-																						onPressed: _startListening,
-																					),
-																				],
-																			),
-																		),
-																	),
-															),
+            bottom: 32.0,
+            left: 20,
+            right: 20,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (processingResult != null && !isProcessing)
+                  // MODIFIED: Wrapped the box in a GestureDetector for a subtle toggle.
+                   GestureDetector(
+                    onTap: () => setState(() => isResultExpanded = !isResultExpanded),
+                    // MODIFIED: Replaced AnimatedContainer with AnimatedSize for a smoother effect.
+                    child: _buildGlassmorphicBox(
+                      child: AnimatedSize(
+                        duration: const Duration(milliseconds: 400),
+                        curve: Curves.easeInOutCubic,
+                        child: Container(
+                          constraints: BoxConstraints(
+                            maxHeight: isResultExpanded ? 200 : 60,
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                          child: Stack(
+                            children: [
+                              SingleChildScrollView(
+                                child: Text(
+                                  processingResult!,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
                               ),
-								],
-							),
-						),
-					),
-				],
-			),
-		);
-	}
-} 
+                              // NEW: Added a subtle, animated icon as a visual cue.
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: AnimatedOpacity(
+                                  duration: const Duration(milliseconds: 300),
+                                  opacity: isResultExpanded ? 1.0 : 0.0,
+                                  child: Icon(
+                                    isResultExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                                    color: Colors.white38,
+                                    size: 20,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                
+                if (processingResult != null && !isProcessing)
+                  const SizedBox(height: 12),
+
+                _buildGlassmorphicBox(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                         IconButton(
+                           icon: const Icon(Icons.history, color: Colors.white, size: 30),
+                           onPressed: () {},
+                         ),
+                        GestureDetector(
+                          onTap: captureAndProcessImage,
+                          child: Container(
+                            height: 80,
+                            width: 80,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 4),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.mic,
+                            color:
+                                _isListening ? Colors.redAccent : Colors.white,
+                          ),
+                          onPressed: _startListening,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGlassmorphicBox({required Widget child}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24.0),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
+        child: Container(
+          decoration: BoxDecoration(
+            // MODIFIED: Replaced solid color border with a gradient for a glassy sheen.
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withOpacity(0.4),
+                Colors.white.withOpacity(0.1),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(24.0),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.2),
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
