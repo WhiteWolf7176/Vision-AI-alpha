@@ -80,7 +80,7 @@ class _CameraScreenState extends State<CameraScreen> {
 			final selectedCamera = backCameras.first;
 			final controller = CameraController(
 				selectedCamera,
-				ResolutionPreset.high,
+				ResolutionPreset.max,
 				enableAudio: true,
 				imageFormatGroup: ImageFormatGroup.yuv420,
 			);
@@ -262,14 +262,18 @@ class _CameraScreenState extends State<CameraScreen> {
 							),
 						)
 					else if (_cameraController != null && _cameraController!.value.isInitialized)
-						Stack(
-							fit: StackFit.expand,
-							children: [
-								CameraPreview(_cameraController!),
-							],
-						)
-					else
-						const SizedBox.shrink(),
+						SizedBox.expand(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _cameraController!.value.previewSize!.height,
+                  height: _cameraController!.value.previewSize!.width,
+                  child: CameraPreview(_cameraController!),
+                ),
+              ),
+            ),
+					//else
+						//const SizedBox.shrink(),
 
 					// Add processing overlay spinner while keeping preview live
 					if (isProcessing)
@@ -317,20 +321,20 @@ class _CameraScreenState extends State<CameraScreen> {
 																		),
 																	),
 																),
-																Align(
-																	alignment: Alignment.centerRight,
-																	child: IconButton(
-																		icon: Icon(
-																			isResultExpanded ? Icons.expand_more : Icons.expand_less,
-																			color: Colors.white,
-																		),
-																		onPressed: () {
-																		setState(() {
-																			isResultExpanded = !isResultExpanded;
-																		});
-																	},
-																	),
-																),
+																// Align(
+																// 	alignment: Alignment.centerRight,
+																// 	child: IconButton(
+																// 		icon: Icon(
+																// 			isResultExpanded ? Icons.expand_more : Icons.expand_less,
+																// 			color: Colors.white,
+																// 		),
+																// 		onPressed: () {
+																// 		setState(() {
+																// 			isResultExpanded = !isResultExpanded;
+																// 		});
+																// 	},
+																// 	),
+																// ),
 															],
 														),
 													),
