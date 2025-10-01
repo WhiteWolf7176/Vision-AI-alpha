@@ -6,6 +6,7 @@ import 'package:visionai/ocr/ocr_service.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
 import 'dart:ui';
+import 'package:visionai/services/gemini_service.dart';
 
 class CameraScreen extends StatefulWidget {
 	const CameraScreen({super.key});
@@ -25,6 +26,8 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 	bool isProcessing = false;
 	String? processingResult;
 	bool isResultExpanded = true;
+
+  late final GeminiService geminiService;
 
 	late final stt.SpeechToText _speech;
 	bool _isListening = false;
@@ -65,6 +68,9 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 			);
 
 			// Load model in advance
+      geminiService = GeminiService();
+      await geminiService.initialize();
+
 			await _yolov8Service.loadModel();
 
 			final cameras = await availableCameras();
@@ -84,6 +90,8 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 				enableAudio: true,
 				imageFormatGroup: ImageFormatGroup.yuv420,
 			);
+
+
 
 			await controller.initialize();
 			if (!mounted) return;
@@ -133,7 +141,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 		await _speech.listen(
 			onResult: (result) async {
 				final recognized = (result.recognizedWords).toLowerCase();
-				if (recognized.contains('scan book') || recognized.contains('read text') || recognized.contains('capture') || recognized.contains("tell me what's ahead") || recognized.contains('tell me what\'s ahead')) {
+				if (recognized.contains('scan book') || recognized.contains('read text') || recognized.contains('capture') || recognized.contains("tell me what's ahead") || recognized.contains('I need assisstance')) {
 					await _speech.stop();
 					setState(() {
 						_isListening = false;
@@ -178,6 +186,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 		try {
 			setState(() {
 				isProcessing = true;
+        processingResult = null;
 			});
 
 			flutterTts.speak("Processing");
@@ -210,6 +219,20 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 			});
 
 			await flutterTts.speak(processingResult!);
+
+      // --- STAGE 2: Detailed Cloud Analysis (Gemini) ---
+      print("Starting detailed analysis with AI...");
+      final geminiResult = await geminiService.describeImage(imagePath);
+      
+      if (!mounted) return;
+      setState(() {
+        // Update the UI with the richer description
+        processingResult = geminiResult;
+      });
+      // Speak the new, better result
+      await flutterTts.speak(geminiResult);
+
+
 		} catch (e, stackTrace) {
 			// This outer catch is for other unexpected errors (like taking a picture failing)
 			print('!!! AN UNEXPECTED ERROR OCCURRED: $e');
@@ -305,7 +328,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                           constraints: BoxConstraints(
                             maxHeight: isResultExpanded ? 200 : 60,
                           ),
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
                           child: Stack(
                             children: [
                               SingleChildScrollView(
