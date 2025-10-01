@@ -7,6 +7,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
 import 'dart:ui';
 import 'package:visionai/services/gemini_service.dart';
+import 'package:visionai/ui/settings_screen.dart';
 
 class CameraScreen extends StatefulWidget {
 	const CameraScreen({super.key});
@@ -194,31 +195,31 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 			final XFile file = await controller.takePicture();
 			final String imagePath = file.path;
 
-			final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
-			final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? [];
+			// final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
+			// final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? [];
 
-			String safeOcrText = '';
-			try {
-				final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
-				safeOcrText = ocrText?.trim() ?? '';
-			} catch (_) {
-				// ignore OCR errors, proceed with empty text
-			}
+			// String safeOcrText = '';
+			// try {
+			// 	final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
+			// 	safeOcrText = ocrText?.trim() ?? '';
+			// } catch (_) {
+			// 	// ignore OCR errors, proceed with empty text
+			// }
 
-			final StringBuffer resultBuffer = StringBuffer();
-			resultBuffer.write(formatDetectionsForTTS(safeYoloResults));
-			resultBuffer.write(' ');
-			if (safeOcrText.isNotEmpty) {
-				resultBuffer.write("The text says: $safeOcrText");
-			}
-			final String finalResultString = resultBuffer.toString();
+			// final StringBuffer resultBuffer = StringBuffer();
+			// resultBuffer.write(formatDetectionsForTTS(safeYoloResults));
+			// resultBuffer.write(' ');
+			// if (safeOcrText.isNotEmpty) {
+			// 	resultBuffer.write("The text says: $safeOcrText");
+			// }
+			// final String finalResultString = resultBuffer.toString();
 
-			if (!mounted) return;
-			setState(() {
-				processingResult = finalResultString.isEmpty ? "Nothing detected. Please try again." : finalResultString;
-			});
+			// if (!mounted) return;
+			// setState(() {
+			// 	processingResult = finalResultString.isEmpty ? "Nothing detected. Please try again." : finalResultString;
+			// });
 
-			await flutterTts.speak(processingResult!);
+			// await flutterTts.speak(processingResult!);
 
       // --- STAGE 2: Detailed Cloud Analysis (Gemini) ---
       print("Starting detailed analysis with AI...");
@@ -372,9 +373,14 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                          IconButton(
-                           icon: const Icon(Icons.history, color: Colors.white, size: 30),
-                           onPressed: () {},
-                         ),
+							icon: const Icon(Icons.settings, color: Colors.white, size: 30),
+							onPressed: () {
+								Navigator.push(
+								context,
+								MaterialPageRoute(builder: (context) => const SettingsScreen()),
+								);
+							},
+						),
                         GestureDetector(
                           onTap: captureAndProcessImage,
                           child: Container(
