@@ -8,6 +8,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'dart:ui';
 import 'package:visionai/services/gemini_service.dart';
 import 'package:visionai/ui/settings_screen.dart';
+import 'package:visionai/services/settings_service.dart';
 
 class CameraScreen extends StatefulWidget {
 	const CameraScreen({super.key});
@@ -29,6 +30,8 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 	bool isResultExpanded = true;
 
   late final GeminiService geminiService;
+
+  final SettingsService _settingsService = SettingsService();
 
 	late final stt.SpeechToText _speech;
 	bool _isListening = false;
@@ -67,6 +70,9 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 					});
 				},
 			);
+      
+      // Apply TTS settings
+      await _applyTtsSettings();
 
 			// Load model in advance
       geminiService = GeminiService();
@@ -108,6 +114,21 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 			});
 		}
 	}
+
+  
+
+  //Method to apply TTS settings
+  Future<void> _applyTtsSettings() async {
+  final speed = await _settingsService.getSpeechSpeed();
+  await flutterTts.setSpeechRate(speed);
+
+  final voice = await _settingsService.getVoice();
+  if (voice != null) {
+    // The setVoice method expects a Map<String, String>, which is what we are saving.
+    await flutterTts.setVoice(voice);
+  }
+  print("TTS settings applied: Speed=$speed, Voice=$voice");
+  }
 
 	Future<bool> _requestPermissions() async {
 		final statuses = await [
@@ -155,6 +176,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 			listenFor: const Duration(seconds: 5),
 		);
 	}
+  
 
 // Format detections for TTS
 	String formatDetectionsForTTS(List<Map<String, dynamic>> detections) {
@@ -192,9 +214,56 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 
 			flutterTts.speak("Processing");
 
+      // Apply lighting setting
+      final manageLighting = await _settingsService.getManageLighting();
+      await _cameraController!.setFlashMode(manageLighting ? FlashMode.auto : FlashMode.off);
+
 			final XFile file = await controller.takePicture();
 			final String imagePath = file.path;
 
+      String finalResultString;
+
+      // Check for offline mode
+      final isOffline = await _settingsService.getOfflineMode();
+      if (isOffline) {
+        print("Running in offline mode");
+        final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
+        final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? [];
+
+        String safeOcrText = '';
+        try {
+          final String? ocrText = await _ocrService.recognizeTextFromImage(imagePath);
+          safeOcrText = ocrText?.trim() ?? '';
+			  } catch (_) {
+				// ignore OCR errors, proceed with empty text
+			  }
+          final StringBuffer resultBuffer = StringBuffer();
+          resultBuffer.write(formatDetectionsForTTS(safeYoloResults));
+          resultBuffer.write(' ');
+          if (safeOcrText.isNotEmpty) {
+            resultBuffer.write("The text says: $safeOcrText");
+          }
+          finalResultString = resultBuffer.toString();
+
+          if (!mounted) return;
+          setState(() {
+            processingResult = finalResultString.isEmpty ? "Nothing detected. Please try again." : finalResultString;
+          });
+
+          await flutterTts.speak(processingResult!);
+      } else {
+        // --- STAGE 2: Detailed Cloud Analysis (Gemini) ---
+        print("Starting detailed analysis with AI...");
+        final geminiResult = await geminiService.describeImage(imagePath);
+        
+        if (!mounted) return;
+        setState(() {
+          // Update the UI with the richer description
+          processingResult = geminiResult;
+        });
+        // Speak the new, better result
+        await flutterTts.speak(geminiResult);
+      }
 			// final List<Map<String, dynamic>>? yoloResults = await _yolov8Service.predictFromFile(imagePath);
 			// final List<Map<String, dynamic>> safeYoloResults = yoloResults ?? [];
 
@@ -222,16 +291,16 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 			// await flutterTts.speak(processingResult!);
 
       // --- STAGE 2: Detailed Cloud Analysis (Gemini) ---
-      print("Starting detailed analysis with AI...");
-      final geminiResult = await geminiService.describeImage(imagePath);
+      // print("Starting detailed analysis with AI...");
+      // final geminiResult = await geminiService.describeImage(imagePath);
       
-      if (!mounted) return;
-      setState(() {
-        // Update the UI with the richer description
-        processingResult = geminiResult;
-      });
-      // Speak the new, better result
-      await flutterTts.speak(geminiResult);
+      // if (!mounted) return;
+      // setState(() {
+      //   // Update the UI with the richer description
+      //   processingResult = geminiResult;
+      // });
+      // // Speak the new, better result
+      // await flutterTts.speak(geminiResult);
 
 
 		} catch (e, stackTrace) {
@@ -373,14 +442,17 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                          IconButton(
-							icon: const Icon(Icons.settings, color: Colors.white, size: 30),
-							onPressed: () {
-								Navigator.push(
-								context,
-								MaterialPageRoute(builder: (context) => const SettingsScreen()),
-								);
-							},
-						),
+                            icon: const Icon(Icons.settings, color: Colors.white, size: 30),
+                            onPressed: () async {
+                              // Wait for the SettingsScreen to be closed
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                              );
+                              // When we get back, re-apply the settings the user might have changed
+                              await _applyTtsSettings();
+                            }
+                         ),
                         GestureDetector(
                           onTap: captureAndProcessImage,
                           child: Container(
